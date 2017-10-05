@@ -1,0 +1,267 @@
+#!/bin/bash
+
+# pwap -- pi wireless access point control
+#
+# This script turns the wifi on or off as an access on a Raspberry Pi
+# running Raspbian.
+#
+# The information for setting up the pi's wireless interface as an
+# access point was obtained from the article, "Raspberry Pi Wireless
+# Access Point" located at:
+#     https://pimylifeup.com/raspberry-pi-wireless-access-point
+#
+# Numeric comments after function names point to the steps in the
+# Access Point article.    
+#
+# The script starts executing at MAIN found close to the bottom of the script.
+#
+# Copyright 2017, Object Computing, Inc. All rights reserved.
+
+
+requestedApIf=wlan0              # wireless interface to be used for the Access Point (AP)
+dhcpConfFile=/etc/dhcpcd.conf    # name of the system DHCP configuration file
+networkIfFile=/etc/network/interfaces
+dnsmasqConfFile=/etc/dnsmasq.conf
+
+usage() {
+    echo "Usage:"
+    echo "       pwapctl"
+
+    exit 1
+}
+
+# Create a list of interfaces available for use.
+createIfList() {
+    ifList=($(ifconfig -s|tail +2|cut -f1 -d" "))
+#   echo ${#ifList[*]}   # size of array
+#   echo ${ifList[1]}   # second element
+}
+
+
+# Point interfaces away from using the requested wireless connection, this 
+# will ensure the connection is free to use as an access point. Ensure the
+# denynterfaces line is above interface lines as it is needed to override them.
+ensureIfIsFree() {
+    if grep -qs $requestedApIf $dhcpConfFile; then return; fi
+
+    echo "denyinterfaces $requestedApIf" >/tmp/new_dhcp.conf   # top line of conf file
+    if [[ -f $dhcpConfFile]]
+    then
+        cat $dhcpConfFile >>/tmp/new_dhcp.conf
+        mv $dhcpConfFile ${dhcpConfFile}_$(date +%Y%b%d%H%M%S)  # could cause problems after 1000 runs
+    fi
+    
+    # belt and suspenders: something went wrong with the mv; do *not* overwrite existing conf file
+    if [[ -f $dhcpConfFile ]]
+    then
+        #TODO: Really should be meaningful
+        echo "meaningful error message"
+        exit -1  # then punt and fix this
+    fi
+
+    mv /tmp/new_dhcpcd.conf $dhcpConfFile
+}
+
+
+# Fetch and validate the command line arguments (if any). 
+handleCommandLineArgs() {
+    [[ $# == 0 ]] && usage      # usage exits
+    [[ $1 =~ -[Hh] ]] && usage
+
+    #TODO: Ensure requested wireless if exists
+}
+
+
+# Wireless requires the Host Access Point (AP) management and the
+# DNS query handler packages. Install them if they are not installed.
+ensureAPandDNSwork() {
+    if ! dpkg -s hostapd &>/dev/null
+    then
+        apt-get install hostapd
+    fi
+
+    if ! dpkg -s dnsmasq &>/dev/null
+    then
+        apt-get install dnsmasq
+    fi
+}
+
+# ToDo: Time to test on pi!!
+
+# set up the static IP address 
+setupIpAddress() {  #7
+#6. Within this file change the wlan0 section so it looks like below, this will setup the static ip address and allow hot plugging on the wlan0 connection.
+#
+#
+#allow-hotplug wlan0  
+#iface wlan0 inet static  
+#    address 192.168.220.1
+#        netmask 255.255.255.0
+#            network 192.168.220.0
+#                broadcast 192.168.220.255
+##    wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf
+
+}
+
+# Configure the static IP address 
+configureIpAddress() {
+}
+
+# Restart the dhcpd service. This will load all configuration changes in
+# the network interface file.  It will also reload the wireless AP 
+# interface to ensure interface changes are in effect.
+restartDhcpd() {    #8
+# service dhcpcd restart
+# ifdown wlan0; sudo ifup wlan0
+}
+
+
+# Adjust the Host Access Point Daemon (hostapd) configuration.
+# Specify the interaction with the wireless device. The only real lines you should worry about in this file is the ssid= line and the wpa_passphrase= line.
+# NOTE WELL: If a different Wi-Fi device than the inbuilt Pi 3 is in use
+# the driver= line must be changed to the correc the driver for the device.
+adjustApdConf() { #9
+#
+#  nano /etc/hostapd/hostapd.conf
+#                interface=wlan0
+#                driver=nl80211
+#
+#                hw_mode=g
+#                channel=6
+#                ieee80211n=1
+#                wmm_enabled=1
+#                ht_capab=[HT40][SHORT-GI-20][DSSS_CCK-40]
+#                macaddr_acl=0
+#                ignore_broadcast_ssid=0
+## Use WPA2
+#                auth_algs=1
+#                wpa=2
+#                wpa_key_mgmt=WPA-PSK
+#                rsn_pairwise=CCMP
+#
+## This is the name of the network
+#                ssid=Pi3-AP
+#   Remember to change wpa_passphrase to something secure
+#   so random people can’t just connect into your Wi-Fi access point.
+#   Unless that is what you want.
+#                wpa_passphrase=raspberry
+}
+
+#
+# TODO: ??               Vyprvpn Long
+#
+#                10. With that done we should now have our hostapd configuration, but before it can be used we need to edit two files. These files are what hostapd will read to find our new configuration file.
+#
+#                To begin editing the first of these two files run the following command:
+specifyApdConfFile() { #10 & #11
+#
+# nano /etc/default/hostapd
+#
+#  set the following
+#   DAEMON_CONF="/etc/hostapd/hostapd.conf"
+#
+}
+#
+#                12. Now we need to edit the second configuration file, this file is located within the init.d folder. We can edit the file with the following command:
+specifyApdInitFile() {  #12 & 13
+#                sudo nano /etc/init.d/hostapd
+#
+#                13. In this file, we need to find the following line and replace it:
+#
+#                Find:
+#
+#                DAEMON_CONF= 
+#
+#                Replace with:
+#
+#                DAEMON_CONF=/etc/hostapd/hostapd.conf
+}
+
+
+# Ensure correct Dnsmasq configuration
+adjustDnsMasqConf() { #14, #15, and 16
+
+    # back up existing config, if any
+    if [[ -f /etc/dnsmasq.conf ]] 
+    then
+        # TODO: Be smart ... if this is from a previous run, just skip the setup and use it.
+        # if [[ like we want ]] 
+        # then use it
+        # else
+            mv /etc/dnsmasq.conf /etc/dnsmasq.conf_$(date +%Y%b%d%H%M%S)  # again, this could cause problems after 1000 runs
+        # fi
+    fi        
+
+    cat >$dnsMasqConf
+#                interface=wlan0       # Use interface wlan0  
+#                listen-address=192.168.220.1   # Specify the address to listen on  
+#                bind-interfaces      # Bind to the interface
+#                server=8.8.8.8       # Use Google DNS  
+#                domain-needed        # Don't forward short names  
+#                bogus-priv           # Drop the non-routed address spaces.  
+#                dhcp-range=192.168.220.50,192.168.220.150,12h # IP range and lease time  
+}
+
+# TODO:  Left off here
+#                17. Next, we need to configure your Raspberry Pi so that it will forward all traffic from our wlan0 connection over to our ethernet connection. First we must enable it through the sysctl.conf configuration file, so let’s begin editing it with the following command:
+#
+#                sudo nano /etc/sysctl.conf
+#
+#                18. Within this file you need to find the following line, and remove the # from the beginning of it.
+#
+#                Find:
+#
+##net.ipv4.ip_forward=1
+#
+#                Replace with:
+#
+#                net.ipv4.ip_forward=1
+#
+#                19. Now since we are impatient and don’t want to wait for it to enable on next boot we can run the following command to activate it immediately:
+#
+#                sudo sh -c "echo 1 > /proc/sys/net/ipv4/ip_forward"
+#
+#                20. With IPv4 Forwarding now enabled we can configure a NAT between our wlan0 interface and our eth0 interface. Basically, this will forward all traffic from our access point over to our ethernet connection.
+#
+#                Run the following commands to add our new rules to the iptable:
+#
+#                sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE  
+#                sudo iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT  
+#                sudo iptables -A FORWARD -i wlan0 -o eth0 -j ACCEPT  
+#
+#                21. Of course iptables are flushed on every boot of the Raspberry Pi so we will need to save our new rules somewhere so they are loaded back in on every boot.
+#
+#                To save our new set of rules run the following command:
+#
+#                sudo sh -c "iptables-save > /etc/iptables.ipv4.nat"
+#
+#                22. Now with our new rules safely saved somewhere we need to make this file be loaded back in on every reboot. The most simple way to handle this is to modify the rc.local file.
+#
+#                Run the following command to begin editing the file:
+#
+#                sudo nano /etc/rc.local
+#
+#                23. Now we are in this file, we need to add the line below. Make sure this line appears above exit 0. This line basically reads the settings out of our iptables.ipv4.nat file and loads them into the iptables.
+#
+#                Find:
+#
+#                exit 0
+#
+#                Add above “exit 0”:
+#
+#                iptables-restore < /etc/iptables.ipv4.nat
+#
+#                Now we can save and quit out of the file by pressing Ctrl +X then pressing Y and then Enter.
+#
+#                24. Finally all we need to do is start the two services and enable them in systemctl. Run the following two commands:
+#
+#                sudo service hostapd start
+#                sudo service dnsmasq start
+#
+#
+#
+#
+## MAIN
+    createIfList
+    handleCommandLineArgs
+    ensureIfIsFree
